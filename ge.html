@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Eye Tracking Concentration Meter</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      margin: 0;
+      background-color: #f0f0f0;
+    }
+
+    #gaze-indicator {
+      position: fixed; /* 화면에 고정 */
+      top: 0;
+      left: 0;
+      width: 20px;
+      height: 20px;
+      background-color: rgba(255, 0, 0, 0.5);  /* 반투명 빨간색 */
+      border-radius: 50%;
+      pointer-events: none; /* 마우스 이벤트 무시 */
+      transform: translate(-50%, -50%); /* 중앙 정렬 보정 */
+      z-index: 1000; /* 다른 요소 위에 표시 */
+      display: none; /* 처음에는 숨김 */
+    }
+
+    #concentration-graph {
+      width: 300px;
+      height: 100px;
+      border: 1px solid #ccc;
+      background-color: white;
+      position: relative;  /* 내부 막대 위치 설정 기준 */
+      margin-top: 20px;
+    }
+
+    #concentration-bar {
+      width: 0;
+      height: 100%;
+      background-color: #4CAF50; /* Green */
+      position: absolute;
+      top: 0;
+      left: 0;
+    }
+
+    #target-area {
+        width: 100px;
+        height: 100px;
+        border: 2px dashed blue;
+        background-color: rgba(0, 0, 255, 0.1); /* 연한 파란색 배경 */
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 10px;
+    }
+
+    #target-dot {
+        width: 10px;
+        height: 10px;
+        background-color: blue;
+        border-radius: 50%;
+    }
+
+    #status-message {
+      margin-top: 10px;
+      font-size: 16px;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="target-area">
+        <div id="target-dot"></div>
+    </div>
+
+  <div id="gaze-indicator"></div>
+
+  <div id="concentration-graph">
+    <div id="concentration-bar"></div>
+  </div>
+
+  <div id="status-message">Loading...</div>
+
+
+  <script>
+    // WebGazer 초기화 (비동기적으로 로드)
+    let isWebgazerLoaded = false;
+
+    webgazer.setGazeListener((data, elapsedTime) => {
+      if (data == null) {
+        return;
+      }
+
+      // 시선 좌표
+      const x = data.x;
+      const y = data.y;
+
+      // 시선 표시기 업데이트
+      const gazeIndicator = document.getElementById('gaze-indicator');
+      gazeIndicator.style.display = 'block'; // 보이도록 설정
+      gazeIndicator.style.left = `${x}px`;
+      gazeIndicator.style.top = `${y}px`;
+
+
+      // 타겟 영역 중심 좌표 계산 (화면 중앙)
+      const targetArea = document.getElementById('target-area');
+      const targetRect = targetArea.getBoundingClientRect();
+      const targetCenterX = targetRect.left + targetRect.width / 2;
+      const targetCenterY = targetRect.top + targetRect.height / 2;
+
+
+      // 집중도 계산 (타겟 영역과의 거리 기반)
+      const distance = Math.sqrt(
+        Math.pow(x - targetCenterX, 2) + Math.pow(y - targetCenterY, 2)
+      );
+
+      // 거리에 반비례하는 집중도 (간단한 공식, 조절 필요)
+      //  최대 거리를 화면 대각선 길이의 절반 정도로 설정.
+      const maxDistance = Math.sqrt(window.innerWidth**2 + window.innerHeight**2) / 2;
+      let concentration = 1 - (distance / maxDistance);
+      concentration = Math.max(0, Math.min(1, concentration)); // 0~1 사이로 제한
+
+
+      // 집중도 그래프 업데이트
+      const concentrationBar = document.getElementById('concentration-bar');
+      concentrationBar.style.width = `${concentration * 100}%`;
+
+      // 상태 메시지 표시 (예: 집중 여부)
+      const statusMessage = document.getElementById('status-message');
+       if (concentration > 0.7) { //임계값 0.7
+            statusMessage.textContent = "Concentrating!";
+            statusMessage.style.color = "green";
+        } else if(concentration > 0.3) {
+            statusMessage.textContent = "Slightly Distracted";
+            statusMessage.style.color = "orange";
+        } else {
+            statusMessage.textContent = "Not Concentrating";
+             statusMessage.style.color = "red";
+        }
+
+    }).begin().showPredictionPoints(false); // 예측 지점 표시 끄기
+
+
+
+    // WebGazer 로드 상태 확인 및 메시지 표시
+     function checkWebgazerReady() {
+        if (webgazer.isReady()) {
+            isWebgazerLoaded = true;
+             document.getElementById('status-message').textContent = "Ready";
+            //  clearInterval(checkInterval); // 반복 중단 (필요한 경우)
+
+        } else {
+            document.getElementById('status-message').textContent = "Loading WebGazer...";
+        }
+    }
+   const checkInterval =  setInterval(checkWebgazerReady, 500); // 0.5초마다 확인
+
+  </script>
+  <script src="https://webgazer.cs.brown.edu/webgazer.js"></script>
+</body>
+</html>
