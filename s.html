@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>눈 추적 및 입벌림 사인파 소리</title>
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            font-family: Arial, sans-serif;
+        }
+        #center-dot {
+            width: 20px;
+            height: 20px;
+            background-color: red;
+            border-radius: 50%;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+        }
+        #concentration-graph {
+            width: 400px;
+            height: 200px;
+        }
+        #status {
+            margin-top: 20px;
+            font-size: 18px;
+        }
+    </style>
+</head>
+<body>
+    <div id="center-dot"></div>
+    <canvas id="concentration-graph" style="display: block; box-sizing: border-box; height: 512px; width: 1024px;" width="2048" height="1024"></canvas>
+    <div id="status">집중도: 0%</div>
+
+    <!-- WebGazer.js 라이브러리 -->
+    <script src="https://webgazer.cs.brown.edu/webgazer.js"></script>
+    <!-- Chart.js 라이브러리 -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+        // Web Audio API 초기화
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        let oscillator = null;
+
+        // 사인파 생성 함수
+        function startSineWave(frequency = 440) {
+            if (!oscillator) {
+                oscillator = audioContext.createOscillator();
+                oscillator.type = 'sine'; // 사인파
+                oscillator.frequency.setValueAtTime(frequency, audioContext.currentTime);
+                oscillator.connect(audioContext.destination);
+                oscillator.start();
+            }
+        }
+
+        // 사인파 중지 함수
+        function stopSineWave() {
+            if (oscillator) {
+                oscillator.stop();
+                oscillator = null;
+            }
+        }
+
+        // WebGazer 초기화
+        window.onload = function() {
+            webgazer.showVideo(true); // 비디오 피드 표시
+            webgazer.setGazeListener(function(data, elapsedTime) {
+                if (data == null) return;
+
+                const x = data.x; // 눈이 바라보는 x 좌표
+                const y = data.y; // 눈이 바라보는 y 좌표
+                const centerX = window.innerWidth / 2;
+                const centerY = window.innerHeight / 2;
+                const threshold = 100; // 가운데로 간주하는 범위 (픽셀)
+                let concentration = parseInt(document.getElementById('status').textContent.match(/\d+/)[0]);
+
+                // 가운데를 보고 있는지 확인
+                if (Math.abs(x - centerX) < threshold && Math.abs(y - centerY) < threshold) {
+                    concentration = Math.min(100, concentration + 1); // 집중도 증가
+                } else {
+                    concentration = Math.max(0, concentration - 1); // 집중도 감소
+                }
+
+                // 상태 업데이트
+                document.getElementById('status').textContent = `집중도: ${concentration}%`;
+                updateGraph(concentration);
+
+                // 얼굴 랜드마크 데이터로 입 열림 감지
+                const faceData = webgazer.getCurrentPrediction();
+                if (faceData && faceData.landmarks) {
+                    const landmarks = faceData.landmarks;
+                    const topLip = landmarks[62]; // 윗입술 중앙
+                    const bottomLip = landmarks[66]; // 아랫입술 중앙
+                    const mouthHeight = Math.abs(topLip.y - bottomLip.y); // 입의 높이 계산
+
+                    // 입이 열렸는지 확인 (임계값은 조정 가능)
+                    if (mouthHeight > 20) {
+                        startSineWave(440); // 입이 열리면 440Hz 사인파 재생
+                    } else {
+                        stopSineWave(); // 입이 닫히면 소리 중지
+                    }
+                }
+            }).begin();
+        };
+
+        // Chart.js 그래프 설정
+        const ctx = document.getElementById('concentration-graph').getContext('2d');
+        const concentrationChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: '집중도 (%)',
+                    data: [],
+                    borderColor: 'blue',
+                    fill: false
+                }]
+            },
+            options: {
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        max: 100
+                    }
+                }
+            }
+        });
+
+        // 그래프 업데이트 함수
+        let time = 0;
+        function updateGraph(concentration) {
+            time++;
+            concentrationChart.data.labels.push(time);
+            concentrationChart.data.datasets[0].data.push(concentration);
+
+            // 데이터가 50개를 넘으면 오래된 데이터 제거
+            if (concentrationChart.data.labels.length > 50) {
+                concentrationChart.data.labels.shift();
+                concentrationChart.data.datasets[0].data.shift();
+            }
+
+            concentrationChart.update();
+        }
+
+        // WebGazer 종료 시 정리
+        window.onbeforeunload = function() {
+            stopSineWave(); // 오디오 정리
+            webgazer.end();
+        };
+    </script>
+
+    <div id="webgazerVideoContainer" style="position: fixed; top: 0px; left: 0px; width: 320px; height: 240px; display: block;">
+        <video playsinline="" id="webgazerVideoFeed" autoplay="" style="position: absolute; width: 320px; height: 240px; display: block; transform: scale(-1, 1);"></video>
+        <canvas id="webgazerVideoCanvas" width="640" height="480" style="display: none;"></canvas>
+        <canvas id="webgazerFaceOverlay" width="640" height="480" style="display: block; position: absolute; transform: scale(-1, 1); width: 320px; height: 240px;"></canvas>
+        <canvas id="webgazerFaceFeedbackBox" style="display: block; border: solid red; position: absolute; top: 40.8px; left: 80.8px; width: 158.4px; height: 158.4px;"></canvas>
+    </div>
+    <div id="webgazerGazeDot" style="display: block; position: fixed; z-index: 99999; left: -5px; top: -5px; background: red; border-radius: 100%; opacity: 0.7; width: 10px; height: 10px;"></div>
+</body>
+</html>
