@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hand-Tracking Guitar Chord Master</title>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      background-color: #f7f7f7;
+      color: #333;
+    }
+
+    .container {
+      position: relative;
+      width: 640px;
+      height: 480px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+
+    #output_canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    .input_video {
+      display: none;
+    }
+
+    h1 {
+      font-size: 2.5em;
+      font-weight: 600;
+      margin-bottom: 0.5em;
+      color: #2962ff;
+      text-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+    }
+
+    #chordDisplay {
+      font-size: 3em;
+      font-weight: bold;
+      margin-top: 20px;
+      color: #4a4a4a;
+      text-align: center;
+      transition: color 0.2s ease-in-out;
+    }
+     #chordDisplay.valid-chord {
+        color: #2ecc71;
+    }
+  </style>
+</head>
+<body>
+    <h1>Hand-Tracking Guitar Chord Master</h1>
+    <div class="container">
+        <video class="input_video"></video>
+        <canvas id="output_canvas"></canvas>
+    </div>
+    <div id="chordDisplay"></div>
+
+    <script>
+    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+    const real = new Float32Array([0, 0.4, 0.6, 0.8, 0.7, 0.5, 0.3, 0.1, -0.1, -0.3, -0.5, -0.6, -0.7, -0.5, -0.3, 0]);
+    const imag = new Float32Array(real.length);
+    const waveTable = audioContext.createPeriodicWave(real, imag);
+
+    function playGuitarSound(frequency) {
+      const oscillator = audioContext.createOscillator();
+      const filter = audioContext.createBiquadFilter();
+      const gainNode = audioContext.createGain();
+
+      oscillator.setPeriodicWave(waveTable);
+      oscillator.frequency.setValueAtTime(frequency, audioContext.currentTime);
+
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(frequency * 4, audioContext.currentTime);
+      filter.Q.setValueAtTime(5, audioContext.currentTime);
+
+      const now = audioContext.currentTime;
+      gainNode.gain.setValueAtTime(0, now);
+      gainNode.gain.linearRampToValueAtTime(0.7, now + 0.05);
+      gainNode.gain.exponentialRampToValueAtTime(0.3, now + 0.2);
+      gainNode.gain.setValueAtTime(0.3, now + 0.2);
+      gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.7);
+
+
+      oscillator.connect(filter);
+      filter.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+
+      oscillator.start();
+      oscillator.stop(now + 0.8);
+    }
+
+    const chordFrequencies = {
+      "C": 261.63,
+      "G": 392.00,
+      "Am": 440.00,
+      "F": 349.23,
+      "D": 293.66,
+      "Em": 329.63,
+      "A": 440.00 * 0.5,
+      "Bm": 493.88 * 0.5,
+      "E": 329.63 * 0.5, // E3
+    };
+
+    const videoElement = document.getElementsByClassName('input_video')[0];
+    const canvasElement = document.getElementById('output_canvas');
+    const canvasCtx = canvasElement.getContext('2d');
+    const chordDisplay = document.getElementById('chordDisplay');
+
+    let lastChord = null;
+
+    function onResults(results) {
+        canvasCtx.save();
+        canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+        canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+        if (results.multiHandLandmarks) {
+            for (const landmarks of results.multiHandLandmarks) {
+              drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, { color: '#00FF00', lineWidth: 4 });
+              drawLandmarks(canvasCtx, landmarks, { color: '#FF0000', lineWidth: 2, radius: 3 });
+
+              const chord = detectChord(landmarks);
+                if (chord && chord !== lastChord) {
+                    chordDisplay.textContent = chord;
+                    chordDisplay.classList.add('valid-chord');
+
+                    if (chordFrequencies[chord]) {
+                      playGuitarSound(chordFrequencies[chord]);
+                    }
+                    lastChord = chord;
+
+                } else if (!chord) {
+                    chordDisplay.textContent = "Detecting...";
+                    chordDisplay.classList.remove('valid-chord');
+                    lastChord = null;
+                }
+            }
+        }
+        canvasCtx.restore();
+    }
+
+    const hands = new Hands({locateFile: (file) => {
+      return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+    }});
+
+    hands.setOptions({
+      maxNumHands: 1,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.7,
+      minTrackingConfidence: 0.7
+    });
+    hands.onResults(onResults);
+
+    const camera = new Camera(videoElement, {
+      onFrame: async () => {
+        await hands.send({image: videoElement});
+      },
+      width: 640,
+      height: 480
+    });
+    camera.start();
+
+    function detectChord(landmarks) {
+        const [THUMB_TIP, INDEX_TIP, MIDDLE_TIP, RING_TIP, PINKY_TIP] = [4, 8, 12, 16, 20];
+        const [THUMB_MCP, INDEX_MCP, MIDDLE_MCP, RING_MCP, PINKY_MCP] = [2, 5, 9, 13, 17];
+
+        function distance(p1, p2) {
+          return Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
+        }
+
+        function fingerBend(tip, mcp) {
+            const distTipMcp = distance(tip, mcp);
+            const distTipBase = distance(tip, {x: 0, y: 0});
+            const distMcpBase = distance(mcp, {x:0, y:0});
+            return 1 - Math.min(1, distTipMcp / (distTipBase + distMcpBase));
+        }
+
+        const thumbBend = fingerBend(landmarks[THUMB_TIP], landmarks[THUMB_MCP]);
+        const indexBend = fingerBend(landmarks[INDEX_TIP], landmarks[INDEX_MCP]);
+        const middleBend = fingerBend(landmarks[MIDDLE_TIP], landmarks[MIDDLE_MCP]);
+        const ringBend = fingerBend(landmarks[RING_TIP], landmarks[RING_MCP]);
+        const pinkyBend = fingerBend(landmarks[PINKY_TIP], landmarks[PINKY_MCP]);
+
+        const thumbIndexDist = distance(landmarks[THUMB_TIP], landmarks[INDEX_TIP]);
+
+        if (indexBend < 0.4 && middleBend > 0.7 && ringBend > 0.7 && pinkyBend > 0.7) {
+            return "C";
+        } else if (indexBend < 0.4 && middleBend < 0.4 && ringBend < 0.4 && pinkyBend > 0.7) {
+          return "G";
+        }  else if (indexBend > 0.7 && middleBend < 0.4 && ringBend < 0.4 && pinkyBend < 0.4 && thumbIndexDist < 0.1) {
+          return "Am";
+        } else if (indexBend < 0.2 && middleBend < 0.2 && ringBend < 0.4 && pinkyBend < 0.7 ) {
+            return "F";
+        } else if(indexBend < 0.4 && middleBend < 0.4 && ringBend > 0.7 && pinkyBend > 0.7) {
+            return "D";
+        }else if(indexBend < 0.4 && middleBend < 0.4 && ringBend < 0.4 && pinkyBend < 0.4) {
+            return "Em";
+        }else if (indexBend < 0.2 && middleBend > 0.8 && ringBend > 0.8 && pinkyBend > 0.8 && thumbIndexDist > 0.1) {
+            return "A";
+        } else if (indexBend < 0.4 && middleBend < 0.4&& ringBend < 0.4 && pinkyBend <0.4 && thumbBend < 0.4){
+            return "E"
+        }
+        else if(indexBend > 0.7 && middleBend > 0.7 && ringBend < 0.4 && pinkyBend < 0.4 && thumbIndexDist < 0.2) {
+          return "Bm";
+        }
+
+      return null;
+    }
+
+    </script>
+</body>
+</html>
