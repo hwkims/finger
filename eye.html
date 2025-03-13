@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>눈 추적 집중도 측정기</title>
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            font-family: Arial, sans-serif;
+        }
+        #center-dot {
+            width: 20px;
+            height: 20px;
+            background-color: red;
+            border-radius: 50%;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+        }
+        #concentration-graph {
+            width: 400px;
+            height: 200px;
+        }
+        #status {
+            margin-top: 20px;
+            font-size: 18px;
+        }
+    </style>
+</head>
+<body>
+    <div id="center-dot"></div>
+    <canvas id="concentration-graph"></canvas>
+    <div id="status">집중도: 0%</div>
+
+    <!-- WebGazer.js 라이브러리 -->
+    <script src="https://webgazer.cs.brown.edu/webgazer.js"></script>
+    <!-- Chart.js 라이브러리 -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+        // WebGazer 초기화
+        window.onload = function() {
+            webgazer.setGazeListener(function(data, elapsedTime) {
+                if (data == null) return;
+
+                const x = data.x; // 눈이 바라보는 x 좌표
+                const y = data.y; // 눈이 바라보는 y 좌표
+                const centerX = window.innerWidth / 2;
+                const centerY = window.innerHeight / 2;
+                const threshold = 100; // 가운데로 간주하는 범위 (픽셀)
+                let concentration = parseInt(document.getElementById('status').textContent.match(/\d+/)[0]);
+
+                // 가운데를 보고 있는지 확인
+                if (Math.abs(x - centerX) < threshold && Math.abs(y - centerY) < threshold) {
+                    concentration = Math.min(100, concentration + 1); // 집중도 증가
+                } else {
+                    concentration = Math.max(0, concentration - 1); // 집중도 감소
+                }
+
+                // 상태 업데이트
+                document.getElementById('status').textContent = `집중도: ${concentration}%`;
+                updateGraph(concentration);
+            }).begin();
+        };
+
+        // Chart.js 그래프 설정
+        const ctx = document.getElementById('concentration-graph').getContext('2d');
+        const concentrationChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: '집중도 (%)',
+                    data: [],
+                    borderColor: 'blue',
+                    fill: false
+                }]
+            },
+            options: {
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        max: 100
+                    }
+                }
+            }
+        });
+
+        // 그래프 업데이트 함수
+        let time = 0;
+        function updateGraph(concentration) {
+            time++;
+            concentrationChart.data.labels.push(time);
+            concentrationChart.data.datasets[0].data.push(concentration);
+
+            // 데이터가 50개를 넘으면 오래된 데이터 제거
+            if (concentrationChart.data.labels.length > 50) {
+                concentrationChart.data.labels.shift();
+                concentrationChart.data.datasets[0].data.shift();
+            }
+
+            concentrationChart.update();
+        }
+
+        // WebGazer 종료 시 정리
+        window.onbeforeunload = function() {
+            webgazer.end();
+        };
+    </script>
+</body>
+</html>
