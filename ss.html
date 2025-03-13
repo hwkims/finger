@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>눈 추적 및 음파 시각화</title>
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background-color: #f0f0f0;
+        }
+        #container {
+            text-align: center;
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+        #center-dot {
+            width: 20px;
+            height: 20px;
+            background-color: red;
+            border-radius: 50%;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 10;
+        }
+        canvas {
+            margin: 10px 0;
+            border: 1px solid #ddd;
+        }
+        #status {
+            font-size: 20px;
+            margin: 10px 0;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        #webgazerVideoContainer {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            width: 320px;
+            height: 240px;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <h1>눈 추적 & 음파 시각화</h1>
+        <div id="center-dot"></div>
+        <canvas id="concentration-graph" width="600" height="300"></canvas>
+        <canvas id="waveform-graph" width="600" height="200"></canvas>
+        <div id="status">집중도: 0%</div>
+        <button id="toggle-sound">소리 활성화</button>
+    </div>
+
+    <!-- WebGazer.js 라이브러리 -->
+    <script src="https://webgazer.cs.brown.edu/webgazer.js"></script>
+    <!-- Chart.js 라이브러리 -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+        // Web Audio API 초기화
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        let oscillator = null;
+        let analyser = audioContext.createAnalyser();
+        let isSoundEnabled = false;
+
+        // 사인파 생성/중지
+        function startSineWave(frequency = 440) {
+            if (isSoundEnabled && !oscillator) {
+                oscillator = audioContext.createOscillator();
+                oscillator.type = 'sine';
+                oscillator.frequency.setValueAtTime(frequency, audioContext.currentTime);
+                oscillator.connect(analyser);
+                analyser.connect(audioContext.destination);
+                oscillator.start();
+            }
+        }
+
+        function stopSineWave() {
+            if (oscillator) {
+                oscillator.stop();
+                oscillator = null;
+            }
+        }
+
+        // WebGazer 초기화
+        window.onload = function() {
+            webgazer.showVideo(true);
+            webgazer.setGazeListener(function(data, elapsedTime) {
+                if (data == null) return;
+
+                const x = data.x;
+                const y = data.y;
+                const centerX = window.innerWidth / 2;
+                const centerY = window.innerHeight / 2;
+                const threshold = 100;
+                let concentration = parseInt(document.getElementById('status').textContent.match(/\d+/)[0]);
+
+                // 집중도 계산
+                if (Math.abs(x - centerX) < threshold && Math.abs(y - centerY) < threshold) {
+                    concentration = Math.min(100, concentration + 2);
+                } else {
+                    concentration = Math.max(0, concentration - 1);
+                }
+
+                document.getElementById('status').textContent = `집중도: ${concentration}%`;
+                updateConcentrationGraph(concentration);
+
+                // 입 열림 감지
+                const faceData = webgazer.getCurrentPrediction();
+                if (faceData && faceData.landmarks) {
+                    const landmarks = faceData.landmarks;
+                    const topLip = landmarks[62];
+                    const bottomLip = landmarks[66];
+                    const mouthHeight = Math.abs(topLip.y - bottomLip.y);
+
+                    if (mouthHeight > 20) {
+                        startSineWave(440);
+                        updateWaveformGraph();
+                    } else {
+                        stopSineWave();
+                    }
+                }
+            }).begin();
+
+            // 소리 토글 버튼
+            document.getElementById('toggle-sound').addEventListener('click', function() {
+                isSoundEnabled = !isSoundEnabled;
+                this.textContent = isSoundEnabled ? '소리 비활성화' : '소리 활성화';
+                if (!isSoundEnabled) stopSineWave();
+            });
+        };
+
+        // 집중도 그래프
+        const concentrationCtx = document.getElementById('concentration-graph').getContext('2d');
+        const concentrationChart = new Chart(concentrationCtx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: '집중도 (%)',
+                    data: [],
+                    borderColor: '#007bff',
+                    fill: false
+                }]
+            },
+            options: {
+                scales: {
+                    y: { beginAtZero: true, max: 100 },
+                    x: { display: false }
+                },
+                plugins: { legend: { display: true } }
+            }
+        });
+
+        function updateConcentrationGraph(concentration) {
+            const time = concentrationChart.data.labels.length + 1;
+            concentrationChart.data.labels.push(time);
+            concentrationChart.data.datasets[0].data.push(concentration);
+            if (concentrationChart.data.labels.length > 50) {
+                concentrationChart.data.labels.shift();
+                concentrationChart.data.datasets[0].data.shift();
+            }
+            concentrationChart.update();
+        }
+
+        // 음파 그래프
+        const waveformCtx = document.getElementById('waveform-graph').getContext('2d');
+        analyser.fftSize = 2048;
+        const bufferLength = analyser.frequencyBinCount;
+        const dataArray = new Uint8Array(bufferLength);
+
+        function updateWaveformGraph() {
+            if (!oscillator) {
+                waveformCtx.clearRect(0, 0, 600, 200);
+                return;
+            }
+            analyser.getByteTimeDomainData(dataArray);
+            waveformCtx.fillStyle = '#f0f0f0';
+            waveformCtx.fillRect(0, 0, 600, 200);
+            waveformCtx.lineWidth = 2;
+            waveformCtx.strokeStyle = '#ff5733';
+
+            waveformCtx.beginPath();
+            const sliceWidth = 600 / bufferLength;
+            let x = 0;
+
+            for (let i = 0; i < bufferLength; i++) {
+                const v = dataArray[i] / 128.0;
+                const y = (v * 200) / 2;
+                if (i === 0) waveformCtx.moveTo(x, y);
+                else waveformCtx.lineTo(x, y);
+                x += sliceWidth;
+            }
+            waveformCtx.lineTo(600, 100);
+            waveformCtx.stroke();
+            requestAnimationFrame(updateWaveformGraph);
+        }
+
+        // 정리
+        window.onbeforeunload = function() {
+            stopSineWave();
+            webgazer.end();
+        };
+    </script>
+
+    <div id="webgazerVideoContainer" style="position: fixed; top: 10px; left: 10px; width: 320px; height: 240px;"></div>
+    <div id="webgazerGazeDot" style="display: block; position: fixed; z-index: 99999; background: red; border-radius: 100%; opacity: 0.7; width: 10px; height: 10px;"></div>
+</body>
+</html>
