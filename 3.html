@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>손가락 펴기 연주 (멀티핸드)</title>
+    <style>
+        /* 스타일은 이전과 동일 */
+        body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; margin: 0; padding: 20px; background-color: #f0f0f0; }
+        #container { position: relative; width: 640px; height: 480px; border: 1px solid black; margin-bottom: 15px; background-color: #333; }
+        #video { display: none; width: 100%; height: 100%; transform: scaleX(-1); }
+        #canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; transform: scaleX(-1); }
+        #status { font-weight: bold; color: #333; margin-bottom: 10px; min-height: 1.2em; text-align: center; }
+        ul { list-style: none; padding: 0; }
+        li { margin-bottom: 5px; }
+        .instructions { background-color: #e0e0e0; padding: 10px; border-radius: 5px; margin-bottom: 15px; }
+    </style>
+    <!-- 라이브러리 로드 (이전과 동일) -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/hand-pose-detection"></script>
+</head>
+<body>
+    <h1>손가락 펴기 연주 (멀티핸드)</h1>
+    <div class="instructions">
+        <p>1. 카메라에 손(들)을 보여주세요.</p>
+        <p>2. 손가락을 접었다 <span style="font-weight:bold; color:green;">펼 때</span> 해당 음이 연주됩니다:</p>
+        <ul>
+            <li>엄지 펴기: 도 (C4) - Square</li>
+            <li>검지 펴기: 레 (D4) - Sawtooth</li>
+            <li>중지 펴기: 미 (E4) - Triangle</li>
+            <li>약지 펴기: 파 (F4) - Sine</li>
+            <li>새끼 펴기: 솔 (G5) - Square</li>
+        </ul>
+    </div>
+
+    <div id="container">
+        <video id="video" playsinline></video>
+        <canvas id="canvas"></canvas>
+    </div>
+    <div id="status">카메라 및 모델 준비 중...</div>
+
+    <script>
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const statusDiv = document.getElementById('status');
+
+        let detector;
+        let audioContext;
+        let isAudioReady = false;
+
+        // --- 상태 관리 (Multi-Hand) ---
+        // Map: key = handIndex (0 or 1), value = { lastFingerState, soundPlaying }
+        let handStates = new Map();
+
+        const soundCooldownMs = 150; // 쿨다운 약간 더 줄임
+        const minConfidence = 0.65;
+
+        // 주파수, 파형, 키포인트 인덱스, 연결 정보 (이전과 동일)
+        const fingerFrequencies = { thumb: 261.63, index: 293.66, middle: 329.63, ring: 349.23, pinky: 783.99 };
+        const fingerWaveforms = { thumb: 'square', index: 'sawtooth', middle: 'triangle', ring: 'sine', pinky: 'square' };
+        const LandmarkIndices = { WRIST: 0, THUMB_CMC: 1, THUMB_MCP: 2, THUMB_IP: 3, THUMB_TIP: 4, INDEX_FINGER_MCP: 5, INDEX_FINGER_PIP: 6, INDEX_FINGER_DIP: 7, INDEX_FINGER_TIP: 8, MIDDLE_FINGER_MCP: 9, MIDDLE_FINGER_PIP: 10, MIDDLE_FINGER_DIP: 11, MIDDLE_FINGER_TIP: 12, RING_FINGER_MCP: 13, RING_FINGER_PIP: 14, RING_FINGER_DIP: 15, RING_FINGER_TIP: 16, PINKY_MCP: 17, PINKY_PIP: 18, PINKY_DIP: 19, PINKY_TIP: 20 };
+        const connections = [ [LandmarkIndices.WRIST, LandmarkIndices.THUMB_CMC], [LandmarkIndices.WRIST, LandmarkIndices.INDEX_FINGER_MCP], [LandmarkIndices.WRIST, LandmarkIndices.PINKY_MCP], [LandmarkIndices.THUMB_CMC, LandmarkIndices.THUMB_MCP], [LandmarkIndices.THUMB_MCP, LandmarkIndices.THUMB_IP], [LandmarkIndices.THUMB_IP, LandmarkIndices.THUMB_TIP], [LandmarkIndices.INDEX_FINGER_MCP, LandmarkIndices.INDEX_FINGER_PIP], [LandmarkIndices.INDEX_FINGER_PIP, LandmarkIndices.INDEX_FINGER_DIP], [LandmarkIndices.INDEX_FINGER_DIP, LandmarkIndices.INDEX_FINGER_TIP], [LandmarkIndices.MIDDLE_FINGER_MCP, LandmarkIndices.MIDDLE_FINGER_PIP], [LandmarkIndices.MIDDLE_FINGER_PIP, LandmarkIndices.MIDDLE_FINGER_DIP], [LandmarkIndices.MIDDLE_FINGER_DIP, LandmarkIndices.MIDDLE_FINGER_TIP], [LandmarkIndices.RING_FINGER_MCP, LandmarkIndices.RING_FINGER_PIP], [LandmarkIndices.RING_FINGER_PIP, LandmarkIndices.RING_FINGER_DIP], [LandmarkIndices.RING_FINGER_DIP, LandmarkIndices.RING_FINGER_TIP], [LandmarkIndices.PINKY_MCP, LandmarkIndices.PINKY_PIP], [LandmarkIndices.PINKY_PIP, LandmarkIndices.PINKY_DIP], [LandmarkIndices.PINKY_DIP, LandmarkIndices.PINKY_TIP], [LandmarkIndices.INDEX_FINGER_MCP, LandmarkIndices.MIDDLE_FINGER_MCP],[LandmarkIndices.MIDDLE_FINGER_MCP, LandmarkIndices.RING_FINGER_MCP], [LandmarkIndices.RING_FINGER_MCP, LandmarkIndices.PINKY_MCP] ];
+
+        // --- Web Audio API 초기화 및 사운드 재생 ---
+        function initAudio() { /* ... 이전과 동일 ... */
+            try { window.AudioContext = window.AudioContext || window.webkitAudioContext; audioContext = new AudioContext(); if (audioContext.state === 'suspended') { console.log("AudioContext suspended."); } isAudioReady = true; console.log("AudioContext ready."); } catch (e) { console.error("Web Audio API not supported", e); statusDiv.innerText = "오류: Web Audio API 미지원"; alert("Web Audio API 미지원 브라우저."); }
+        }
+
+        // 사운드 재생 함수 (handIndex 파라미터 추가)
+        function playSound(frequency, duration = 0.15, fingerName, type = 'sine', handIndex) {
+            if (!isAudioReady || !audioContext) return;
+
+            const handState = handStates.get(handIndex);
+            if (!handState || handState.soundPlaying[fingerName]) return; // 해당 손 상태 없거나 이미 재생중이면 반환
+
+            if (audioContext.state === 'suspended') {
+                audioContext.resume().then(() => {
+                    console.log('AudioContext resumed by playSound');
+                    actuallyPlaySound(frequency, duration, fingerName, type, handIndex);
+                }).catch(e => console.error("Error resuming AC:", e));
+            } else {
+                actuallyPlaySound(frequency, duration, fingerName, type, handIndex);
+            }
+        }
+
+        // 실제 사운드 생성 및 재생 (handIndex 파라미터 추가)
+        function actuallyPlaySound(frequency, duration, fingerName, type, handIndex) {
+            const handState = handStates.get(handIndex);
+            if (!handState) return; // 안전 장치
+
+            handState.soundPlaying[fingerName] = true; // 해당 손의 해당 손가락 재생 시작 플래그
+            // statusDiv.innerText = `Hand ${handIndex + 1}: ${fingerName.toUpperCase()} opened - Playing ${type} ${Math.round(frequency)}Hz`;
+
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            oscillator.type = type;
+            oscillator.frequency.setValueAtTime(frequency, audioContext.currentTime);
+            let initialGain = (type === 'square' || type === 'sawtooth') ? 0.25 : 0.4;
+            gainNode.gain.setValueAtTime(initialGain, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + duration);
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            oscillator.start(audioContext.currentTime);
+            oscillator.stop(audioContext.currentTime + duration);
+
+            oscillator.onended = () => {
+                 try { oscillator.disconnect(); gainNode.disconnect(); } catch(e) {}
+                 const currentState = handStates.get(handIndex); // onended 시점의 최신 상태 가져오기
+                 if (currentState) {
+                     // 쿨다운 타이머 설정
+                     setTimeout(() => {
+                         // setTimeout 콜백 시점에도 handState가 유효한지 다시 확인
+                         const finalState = handStates.get(handIndex);
+                         if(finalState) {
+                             finalState.soundPlaying[fingerName] = false;
+                         }
+                     }, soundCooldownMs);
+                 }
+             };
+        }
+
+        // --- 웹캠 설정 (변경 없음) ---
+        async function setupCamera() { /* ... 이전과 동일 ... */
+            try { const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: false }); video.srcObject = stream; return new Promise((resolve) => { video.onloadedmetadata = () => { video.width = video.videoWidth; video.height = video.videoHeight; canvas.width = video.videoWidth; canvas.height = video.videoHeight; resolve(video); }; }); } catch (error) { console.error("Camera access error:", error); statusDiv.innerText = "오류: 카메라 접근 불가"; alert("카메라 권한 필요"); throw error; }
+        }
+
+        // --- 모델 로드 (변경 없음) ---
+        async function loadDetector() { /* ... 이전과 동일 ... */
+             try { statusDiv.innerText = "TF.js Backend ready..."; await tf.ready(); statusDiv.innerText = "Loading hand detection model..."; const model = handPoseDetection.SupportedModels.MediaPipeHands; const detectorConfig = { runtime: 'tfjs', modelType: 'lite', maxHands: 2 }; detector = await handPoseDetection.createDetector(model, detectorConfig); statusDiv.innerText = "Model loaded. Ready."; console.log(`Hand Pose model loaded (max ${detectorConfig.maxHands} hands)`); } catch (error) { console.error("Model loading error:", error); statusDiv.innerText = "오류: 모델 로드 실패"; throw error; }
+        }
+
+        // --- 손 감지 및 그리기 루프 (멀티핸드 상태 관리 추가) ---
+        async function detectHands() {
+            if (!detector || video.readyState < 2) {
+                 requestAnimationFrame(detectHands);
+                 return;
+            }
+
+            const detectedHandIndices = new Set(); // 현재 프레임에서 감지된 손 인덱스 추적
+
+            try {
+                const hands = await detector.estimateHands(video, { flipHorizontal: false });
+
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+                if (hands && hands.length > 0) {
+                    statusDiv.innerText = `Detected ${hands.length} hand(s). Fold and open fingers to play.`;
+
+                    hands.forEach((hand, index) => { // 각 손에 대해 반복
+                        if (hand.score >= minConfidence) {
+                            detectedHandIndices.add(index); // 감지된 손 인덱스 추가
+
+                            // 이 손의 상태가 없으면 새로 생성 (초기 상태는 'down'으로 설정하여 첫 펴짐 감지)
+                            if (!handStates.has(index)) {
+                                handStates.set(index, {
+                                    lastFingerState: { thumb: 'down', index: 'down', middle: 'down', ring: 'down', pinky: 'down' },
+                                    soundPlaying: { thumb: false, index: false, middle: false, ring: false, pinky: false }
+                                });
+                                console.log(`Initialized state for hand index: ${index}`);
+                            }
+
+                            // 현재 손 그리기
+                            drawHand(hand.keypoints, index); // 그리기 함수에 index 전달 (색상 구분 등 가능)
+
+                            // 현재 손의 상태 가져오기
+                            const currentHandState = handStates.get(index);
+
+                            // 손가락 펴짐 감지 및 사운드 트리거 (상태 객체와 인덱스 전달)
+                            checkFingersOpened(hand.keypoints, currentHandState, index);
+                        }
+                    });
+                } else {
+                     statusDiv.innerText = "Show your hand(s) to start.";
+                }
+
+                 // --- 상태 정리: 사라진 손의 상태 제거 ---
+                 for (const existingIndex of handStates.keys()) {
+                    if (!detectedHandIndices.has(existingIndex)) {
+                        handStates.delete(existingIndex);
+                        console.log(`Removed state for disappeared hand index: ${existingIndex}`);
+                    }
+                }
+
+            } catch (error) {
+                console.error("Error during hand detection:", error);
+            }
+
+            requestAnimationFrame(detectHands);
+        }
+
+        // 손 그리기 (handIndex 추가 - 색상 구분 예시)
+        function drawHand(keypoints, handIndex) {
+            const colors = ['Red', 'Blue']; // 손 인덱스별 색상
+            const color = colors[handIndex % colors.length]; // 0이면 Red, 1이면 Blue
+
+            // 키포인트
+            ctx.fillStyle = color; // 손마다 다른 색상
+            ctx.strokeStyle = 'White'; ctx.lineWidth = 2;
+            for (let i = 0; i < keypoints.length; i++) { const { x, y } = keypoints[i]; ctx.beginPath(); ctx.arc(x, y, 4, 0, 2 * Math.PI); ctx.fill(); ctx.stroke(); }
+
+            // 뼈대
+            ctx.strokeStyle = 'Lime'; ctx.lineWidth = 3; // 뼈대는 동일하게
+            for (const connection of connections) { const [startIdx, endIdx] = connection; const kp1 = keypoints[startIdx]; const kp2 = keypoints[endIdx]; if (kp1 && kp2) { ctx.beginPath(); ctx.moveTo(kp1.x, kp1.y); ctx.lineTo(kp2.x, kp2.y); ctx.stroke(); } }
+        }
+
+        // --- 손가락 **펴짐** 감지 및 사운드 트리거 ---
+        function checkFingersOpened(keypoints, handState, handIndex) {
+             // handState가 없으면 (예: 방금 사라진 손) 처리 중단
+             if (!handState) return;
+
+            const fingerDefinitions = [
+                { name: 'thumb',  tip: LandmarkIndices.THUMB_TIP,  mcp: LandmarkIndices.THUMB_MCP, pip: LandmarkIndices.THUMB_IP, foldThreshold: 15, check: 'x_vs_mcp' },
+                { name: 'index',  tip: LandmarkIndices.INDEX_FINGER_TIP,  mcp: LandmarkIndices.INDEX_FINGER_MCP, pip: LandmarkIndices.INDEX_FINGER_PIP, foldThreshold: 10, check: 'y_vs_mcp' },
+                { name: 'middle', tip: LandmarkIndices.MIDDLE_FINGER_TIP, mcp: LandmarkIndices.MIDDLE_FINGER_MCP, pip: LandmarkIndices.MIDDLE_FINGER_PIP, foldThreshold: 10, check: 'y_vs_mcp' },
+                { name: 'ring',   tip: LandmarkIndices.RING_FINGER_TIP,   mcp: LandmarkIndices.RING_FINGER_MCP, pip: LandmarkIndices.RING_FINGER_PIP, foldThreshold: 10, check: 'y_vs_mcp' },
+                { name: 'pinky',  tip: LandmarkIndices.PINKY_TIP,  mcp: LandmarkIndices.PINKY_MCP, pip: LandmarkIndices.PINKY_PIP, foldThreshold: 10, check: 'y_vs_mcp' }
+            ];
+
+            for (const finger of fingerDefinitions) {
+                const tip = keypoints[finger.tip];
+                const mcp = keypoints[finger.mcp];
+                const pip = keypoints[finger.pip];
+
+                if (!tip || !mcp || !pip) continue;
+
+                let isFolded = false;
+                if (finger.check === 'y_vs_mcp') {
+                    isFolded = tip.y > mcp.y + finger.foldThreshold; // 이전과 동일한 접힘 기준
+                } else if (finger.check === 'x_vs_mcp') {
+                     // 엄지 기준 약간 수정: MCP보다 오른쪽(안쪽)이고, PIP보다 아래쪽일 때 접힘으로 간주
+                     isFolded = (tip.x > mcp.x + finger.foldThreshold) && (tip.y > pip.y - 5);
+                }
+
+                // 현재 상태: 접혀있지 않으면 'up', 접혀있으면 'down'
+                const currentState = isFolded ? 'down' : 'up';
+                const previousState = handState.lastFingerState[finger.name];
+
+                // *** 트리거 조건 변경: 'down' -> 'up'으로 변경될 때 ***
+                if (currentState === 'up' && previousState === 'down' && !handState.soundPlaying[finger.name]) {
+                    playSound(
+                        fingerFrequencies[finger.name],
+                        0.15,
+                        finger.name,
+                        fingerWaveforms[finger.name],
+                        handIndex // handIndex 전달
+                    );
+                }
+
+                // 현재 상태 업데이트 (해당 손의 상태 객체에)
+                handState.lastFingerState[finger.name] = currentState;
+            }
+        }
+
+
+        // --- 메인 실행 함수 (변경 없음) ---
+        async function main() {
+            try { initAudio(); statusDiv.innerText = "Requesting camera..."; await setupCamera(); video.play(); statusDiv.innerText = "Camera ready."; await loadDetector(); detectHands(); } catch (error) { console.error("Initialization failed:", error); statusDiv.innerText = "Initialization failed."; }
+        }
+
+        // 페이지 로드 후 시작 (변경 없음)
+        window.addEventListener('load', main);
+
+        // 클릭 시 오디오 컨텍스트 재개 (변경 없음)
+        document.body.addEventListener('click', () => {
+            if (audioContext && audioContext.state === 'suspended') {
+                audioContext.resume().then(() => { console.log('AudioContext resumed.'); statusDiv.innerText = "Audio ready! Show hands."; }).catch(e => console.error('AudioContext resume error:', e));
+            }
+        }, { once: true });
+
+    </script>
+</body>
+</html>
