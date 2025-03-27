@@ -1,7 +1,8 @@
 # Real-time Hand Pose Detection with Finger-Specific Sounds
 
 [![GitHub](https://img.shields.io/badge/GitHub-hwkims-blue?logo=github)](https://github.com/hwkims)
-![image](https://github.com/user-attachments/assets/aea35a2c-d07a-4a04-b816-00feecc978b2)
+![image](https://github.com/user-attachments/assets/af7d7539-c109-438f-b5f0-ac7ef4a9ac3f)
+
 
 This project demonstrates real-time hand pose estimation using a webcam feed, specifically identifying when individual fingers are raised. It utilizes **TensorFlow.js** with the **MediaPipe Hands** model to detect detailed hand landmarks.
 
