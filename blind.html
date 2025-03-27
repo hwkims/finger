@@ -1,0 +1,619 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>시각 보조 내비게이션 v3</title>
+    <style>
+        /* Reset and Base Styles */
+        *, *::before, *::after {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        html, body {
+            height: 100%;
+            overflow: hidden; /* Prevent scrolling */
+            background-color: #000; /* Video background */
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center; /* Center video container */
+            color: #EFEFEF; /* Light text on dark background */
+            position: relative; /* For overlay positioning */
+             overscroll-behavior: contain;
+        }
+
+        /* Video and Canvas Container */
+        #videoContainer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+        }
+
+        #video {
+            display: block;
+            /* Ensure video covers the container while maintaining aspect ratio */
+            min-width: 100%;
+            min-height: 100%;
+            width: auto;
+            height: auto;
+            object-fit: cover; /* Cover the area */
+            transform: scaleX(-1); /* Mirror view */
+        }
+
+        #canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            transform: scaleX(-1); /* Mirror canvas */
+            pointer-events: none;
+            object-fit: contain; /* Match video's effective drawing area */
+        }
+
+        /* Controls Overlay (Glassmorphism) */
+        #controlsOverlay {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            padding: 15px 20px;
+            padding-bottom: calc(15px + env(safe-area-inset-bottom)); /* Adjust for safe area */
+
+            background: rgba(0, 0, 0, 0.6); /* Darker, less intrusive glass */
+            backdrop-filter: blur(20px) saturate(150%);
+            -webkit-backdrop-filter: blur(20px) saturate(150%);
+            border-top: 1px solid rgba(255, 255, 255, 0.15); /* Subtle top border */
+            box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.15); /* Subtle shadow upwards */
+
+            display: flex;
+            flex-direction: column;
+            gap: 12px; /* Space between elements inside */
+            z-index: 10;
+        }
+
+        /* Status Display */
+        #statusDisplay {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 15px;
+            font-weight: 500;
+            min-height: 1.5em;
+            color: rgba(255, 255, 255, 0.9);
+            text-align: left; /* Align text to the left */
+        }
+        #statusIcon { /* Placeholder for potential future icon */
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            background-color: #888; /* Default grey */
+            border-radius: 50%;
+            transition: background-color 0.3s ease;
+        }
+        #statusIcon.loading { background-color: #FFA500; /* Orange */ }
+        #statusIcon.ready { background-color: #4CAF50; /* Green */ }
+        #statusIcon.detecting { background-color: #007AFF; /* Blue */ }
+        #statusIcon.error { background-color: #FF3B30; /* Red */ }
+
+
+        /* Buttons Area */
+        .buttonsArea {
+            display: flex;
+            gap: 15px;
+            justify-content: space-around; /* Space out buttons */
+        }
+
+        /* Refined Button Style */
+        button.control-button {
+            flex-grow: 1; /* Make buttons fill space */
+            padding: 14px 20px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            border: none;
+            border-radius: 12px; /* Slightly less rounded */
+            color: #fff;
+            background: rgba(255, 255, 255, 0.15); /* Subtle background */
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            transition: background-color 0.2s ease, transform 0.1s ease;
+            outline: none;
+        }
+        button.control-button:active:not(:disabled) {
+             transform: scale(0.97); /* Press effect */
+             background-color: rgba(255, 255, 255, 0.25);
+        }
+
+        button.control-button#startButton {
+            /* Use color accent for primary action */
+             background: rgba(0, 122, 255, 0.7); /* iOS Blue, semi-transparent */
+             border-color: rgba(0, 122, 255, 0.8);
+        }
+         button.control-button#startButton:active:not(:disabled) {
+             background-color: rgba(0, 122, 255, 0.9);
+         }
+
+
+        button.control-button#stopButton {
+            background: rgba(255, 59, 48, 0.7); /* iOS Red, semi-transparent */
+             border-color: rgba(255, 59, 48, 0.8);
+        }
+         button.control-button#stopButton:active:not(:disabled) {
+             background-color: rgba(255, 59, 48, 0.9);
+         }
+
+        button.control-button:disabled {
+            background-color: rgba(120, 120, 128, 0.36); /* iOS disabled color */
+            color: rgba(235, 235, 245, 0.4);
+            border-color: transparent;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+
+        /* Settings Area */
+        .settingsArea {
+            display: flex;
+            justify-content: space-around; /* Evenly space toggles */
+            padding-top: 5px; /* Add some space above toggles */
+        }
+
+        .setting-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14px;
+            color: rgba(235, 235, 245, 0.7); /* Lighter text for settings */
+        }
+
+        /* Toggle Switch (Reused from v2, minor adjustments maybe) */
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 44px;
+            height: 24px;
+        }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider {
+            position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
+            background-color: rgba(120, 120, 128, 0.36); /* Off state */
+            transition: .3s; border-radius: 24px;
+        }
+        .slider:before {
+            position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 3px;
+            background-color: white; transition: .3s; border-radius: 50%;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+        }
+        input:checked + .slider { background-color: #34C759; } /* iOS Green for On */
+        input:focus + .slider { box-shadow: 0 0 1px #34C759; }
+        input:checked + .slider:before { transform: translateX(20px); }
+
+        /* Screen reader only text */
+        .sr-only { /* ... (same as before) ... */ }
+    </style>
+    <!-- TensorFlow.js and COCO-SSD -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+</head>
+<body>
+    <h1 class="sr-only">시각 보조 내비게이션</h1>
+
+    <div id="videoContainer">
+        <video id="video" playsinline muted autoplay></video>
+        <canvas id="canvas"></canvas>
+    </div>
+
+    <!-- Unified Controls Overlay -->
+    <div id="controlsOverlay">
+        <!-- Status -->
+        <div id="statusDisplay">
+             <span id="statusIcon" class="loading"></span>
+             <span id="statusText" role="status" aria-live="polite">앱 초기화 중...</span>
+        </div>
+
+        <!-- Buttons -->
+        <div class="buttonsArea">
+            <button id="startButton" class="control-button" aria-label="탐지 시작" disabled>시작</button>
+            <button id="stopButton" class="control-button" aria-label="탐지 중지" disabled>중지</button>
+        </div>
+
+         <!-- Settings -->
+        <div class="settingsArea">
+            <div class="setting-item">
+                <label for="soundToggle" class="sr-only">음성 안내</label>
+                 <label class="switch">
+                    <input type="checkbox" id="soundToggle" checked>
+                    <span class="slider"></span>
+                </label>
+                <span>음성</span>
+            </div>
+            <div class="setting-item">
+                 <label for="vibrationToggle" class="sr-only">진동 알림</label>
+                 <label class="switch">
+                    <input type="checkbox" id="vibrationToggle" checked>
+                    <span class="slider"></span>
+                </label>
+                <span>진동</span>
+            </div>
+             <!-- Optional: Bounding Box Toggle -->
+             <!--
+             <div class="setting-item">
+                 <label for="boxToggle" class="sr-only">박스 표시</label>
+                 <label class="switch">
+                    <input type="checkbox" id="boxToggle"> <span class="slider"></span>
+                 </label>
+                 <span>박스</span>
+             </div>
+             -->
+        </div>
+    </div>
+
+
+    <script>
+        // --- DOM Elements ---
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const statusText = document.getElementById('statusText');
+        const statusIcon = document.getElementById('statusIcon');
+        const startButton = document.getElementById('startButton');
+        const stopButton = document.getElementById('stopButton');
+        const soundToggle = document.getElementById('soundToggle');
+        const vibrationToggle = document.getElementById('vibrationToggle');
+        // const boxToggle = document.getElementById('boxToggle'); // Uncomment if using box toggle
+
+        // --- State Variables ---
+        let model = null;
+        let stream = null;
+        let animationFrameId = null; // Use ID for cancellation
+        let isDetecting = false;
+        let lastAnnouncedObject = { class: null, time: 0 }; // Track last announced object
+        const ANNOUNCE_COOLDOWN = 3500; // Cooldown in ms (slightly longer)
+        const CONFIDENCE_THRESHOLD = 0.6; // Minimum detection confidence
+        const CENTER_THRESHOLD_RATIO = 0.35; // How close to center (e.g., 0.3 = within central 60%)
+
+        // --- Settings ---
+        let settings = {
+            soundEnabled: soundToggle.checked,
+            vibrationEnabled: vibrationToggle.checked,
+            // showBoxes: boxToggle ? boxToggle.checked : false // Uncomment if using box toggle
+            showBoxes: false // Keep boxes off by default for cleaner look
+        };
+
+        // --- Web APIs ---
+        const synth = window.speechSynthesis;
+        let utterance = new SpeechSynthesisUtterance();
+        utterance.lang = 'ko-KR';
+        utterance.rate = 1.2; // Adjust speech rate as needed
+
+        // --- Utility Functions ---
+        function updateStatus(text, state = 'loading') {
+            statusText.textContent = text;
+            statusIcon.className = state; // Update icon color based on state
+             console.log(`Status (${state}): ${text}`);
+        }
+
+        // --- Initialization ---
+        async function initializeApp() {
+            updateStatus('환경 확인 중...', 'loading');
+            startButton.disabled = true;
+            stopButton.disabled = true;
+
+            // Check API support
+            if (!navigator.mediaDevices?.getUserMedia) {
+                updateStatus('오류: 카메라 API 미지원', 'error'); return;
+            }
+            if (!window.tf) {
+                 updateStatus('오류: TensorFlow.js 로드 실패', 'error'); return;
+            }
+            if (!window.cocoSsd) {
+                 updateStatus('오류: COCO-SSD 모델 로드 실패', 'error'); return;
+            }
+            if (!synth) {
+                console.warn('음성 안내 API 미지원');
+                soundToggle.disabled = true; settings.soundEnabled = false;
+            }
+            if (!navigator.vibrate) {
+                console.warn('진동 API 미지원');
+                vibrationToggle.disabled = true; settings.vibrationEnabled = false;
+            }
+
+            updateStatus('모델 로딩 중...', 'loading');
+            await loadModel();
+        }
+
+        // 1. Load Model
+        async function loadModel() {
+            try {
+                await tf.ready();
+                let backend = 'webgl';
+                try {
+                    await tf.setBackend(backend);
+                } catch (e) {
+                    console.warn(`WebGL 백엔드 설정 실패 (${e.message}), CPU로 전환합니다.`);
+                    backend = 'cpu';
+                    await tf.setBackend(backend);
+                }
+                console.log(`Using TensorFlow.js backend: ${tf.getBackend()}`);
+                model = await cocoSsd.load();
+                updateStatus('준비 완료', 'ready');
+                startButton.disabled = false;
+            } catch (error) {
+                console.error('모델 로드 실패:', error);
+                updateStatus(`오류: 모델 로드 실패 (${error.message})`, 'error');
+            }
+        }
+
+        // 2. Start Camera and Detection
+        async function startDetection() {
+            if (!model) { updateStatus('오류: 모델 미로드', 'error'); return; }
+            if (isDetecting) return;
+
+            updateStatus('카메라 접근 중...', 'loading');
+            startButton.disabled = true; // Disable while starting
+
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        facingMode: 'environment',
+                        width: { ideal: 640 }, height: { ideal: 480 }
+                    },
+                    audio: false
+                });
+                video.srcObject = stream;
+
+                await new Promise((resolve, reject) => {
+                    video.onloadedmetadata = () => {
+                        // Adjust canvas size after metadata is loaded
+                        canvas.width = video.videoWidth;
+                        canvas.height = video.videoHeight;
+                        // Ensure transforms are applied correctly after size change
+                        video.style.transform = 'scaleX(-1)';
+                        canvas.style.transform = 'scaleX(-1)';
+                        console.log(`Video resolution: ${video.videoWidth}x${video.videoHeight}`);
+                        resolve();
+                    };
+                    video.onerror = (e) => reject(new Error('비디오 로드 오류'));
+                });
+
+
+                isDetecting = true;
+                stopButton.disabled = false;
+                lastAnnouncedObject = { class: null, time: 0 }; // Reset announcement state
+                updateStatus('탐지 중...', 'detecting');
+                detectFrame(); // Start the detection loop
+
+            } catch (error) {
+                console.error('카메라 시작 실패:', error);
+                let errorMsg = '오류: 카메라 시작 실패';
+                if (error.name === 'NotAllowedError') errorMsg += ' (권한 필요)';
+                else if (error.name === 'NotFoundError') errorMsg += ' (카메라 없음)';
+                updateStatus(errorMsg, 'error');
+                stopDetection(); // Clean up
+                startButton.disabled = (model !== null); // Re-enable start only if model is loaded
+            }
+        }
+
+        // 3. Stop Camera and Detection
+        function stopDetection() {
+            isDetecting = false;
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
+                animationFrameId = null;
+            }
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                stream = null;
+            }
+            video.srcObject = null;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            if (synth?.speaking) synth.cancel();
+            if (navigator.vibrate) navigator.vibrate(0); // Stop vibration
+
+            updateStatus('탐지 중지됨', 'ready'); // Go back to ready state
+            startButton.disabled = (model === null);
+            stopButton.disabled = true;
+            console.log('탐지 중지됨');
+        }
+
+        // 4. Detection Loop
+        async function detectFrame() {
+            if (!isDetecting || !model || video.readyState < video.HAVE_METADATA) {
+                if (isDetecting) { // Reschedule if detection should still be running
+                    animationFrameId = requestAnimationFrame(detectFrame);
+                }
+                return;
+            }
+
+            try {
+                const predictions = await model.detect(video);
+                processDetections(predictions);
+            } catch (error) {
+                 console.error("탐지 오류:", error);
+                 // Don't stop the loop, just log and continue
+            }
+
+            if (isDetecting) {
+                animationFrameId = requestAnimationFrame(detectFrame);
+            }
+        }
+
+        // 5. Process Detections and Provide Feedback
+        function processDetections(predictions) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height); // Clear previous drawings
+
+            const validPredictions = predictions.filter(p => p.score > CONFIDENCE_THRESHOLD);
+
+            if (validPredictions.length === 0) {
+                 // Optionally update status to "Clear" or similar after a timeout
+                return;
+            }
+
+            // Find the most relevant object (central and important)
+            let primaryObject = null;
+            let minDistanceToCenter = Infinity;
+
+            const videoCenterX = canvas.width / 2;
+            const centerThresholdPx = canvas.width * CENTER_THRESHOLD_RATIO; // Pixel threshold from center
+
+            const importantClasses = ['person', 'car', 'bicycle', 'motorcycle', 'bus', 'truck', 'stop sign']; // Prioritized classes
+
+            validPredictions.forEach(prediction => {
+                const [x, y, width, height] = prediction.bbox;
+                const objectCenterX = x + width / 2;
+                const distanceToCenter = Math.abs(objectCenterX - videoCenterX);
+
+                // Check if within center threshold
+                if (distanceToCenter < centerThresholdPx) {
+                    let isPrimaryCandidate = false;
+                    if (!primaryObject) {
+                        isPrimaryCandidate = true; // First central object
+                    } else {
+                        // Prioritize important classes if multiple are central
+                        const currentIsImportant = importantClasses.includes(prediction.class);
+                        const primaryIsImportant = importantClasses.includes(primaryObject.class);
+
+                        if (currentIsImportant && !primaryIsImportant) {
+                            isPrimaryCandidate = true; // New one is important, old wasn't
+                        } else if (currentIsImportant === primaryIsImportant) {
+                            // Both same importance level, pick closer one
+                            if (distanceToCenter < minDistanceToCenter) {
+                                isPrimaryCandidate = true;
+                            }
+                        }
+                        // If current is not important and primary is, keep primary
+                    }
+
+                    if (isPrimaryCandidate) {
+                        primaryObject = prediction;
+                        minDistanceToCenter = distanceToCenter;
+                    }
+                }
+
+                 // --- Draw Bounding Boxes (Optional) ---
+                 if (settings.showBoxes && canvas.width > 0 && canvas.height > 0) {
+                    const isPrimary = (prediction === primaryObject);
+                    ctx.strokeStyle = isPrimary ? '#34C759' : '#FF9500'; // Green for primary, Orange for others
+                    ctx.lineWidth = isPrimary ? 3 : 1.5;
+                    ctx.fillStyle = ctx.strokeStyle;
+                    ctx.font = '14px Arial';
+
+                    ctx.beginPath();
+                    ctx.rect(x, y, width, height);
+                    ctx.stroke();
+                    ctx.fillText(
+                        `${translateObjectName(prediction.class)} (${Math.round(prediction.score * 100)}%)`,
+                        x, y > 10 ? y - 5 : y + height + 15
+                    );
+                 }
+            });
+
+            // --- Generate Feedback for the Primary Object ---
+            if (primaryObject) {
+                const now = Date.now();
+                const objectClass = primaryObject.class;
+
+                 // Announce if different object or cooldown passed
+                if (objectClass !== lastAnnouncedObject.class || now - lastAnnouncedObject.time > ANNOUNCE_COOLDOWN) {
+
+                    const [x, , width] = primaryObject.bbox;
+                    const objectCenterX = x + width / 2;
+                    let position = "중앙"; // Default if close to center
+                    if (canvas.width > 0) {
+                         const relativePos = (objectCenterX / canvas.width);
+                         if (relativePos < 0.40) position = "좌측"; // More towards left
+                         else if (relativePos > 0.60) position = "우측"; // More towards right
+                    }
+
+                    const message = `${translateObjectName(objectClass)} ${position}`;
+                    updateStatus(`전방: ${message}`, 'detecting'); // Update status bar
+
+                    // Provide feedback based on settings
+                    if (settings.soundEnabled) speak(message);
+                    if (settings.vibrationEnabled) vibrateFeedback();
+
+                    lastAnnouncedObject = { class: objectClass, time: now };
+                }
+            } else if (isDetecting) {
+                 // If no primary object found but detection is active, show generic status
+                 if (statusText.textContent.startsWith("전방:")) {
+                     updateStatus("탐지 중...", 'detecting'); // Reset status if previous object gone
+                 }
+            }
+        }
+
+        // 6. Speak Text (TTS)
+        function speak(text) {
+            if (!settings.soundEnabled || !synth || !text) return;
+            if (synth.speaking) synth.cancel(); // Cancel previous before speaking new
+
+            utterance.text = text;
+            utterance.onend = () => console.log("Speech finished.");
+            utterance.onerror = (e) => console.error("SpeechSynthesis error:", e);
+
+            // Short delay might help prevent issues on some platforms
+            setTimeout(() => {
+                 try { synth.speak(utterance); } catch(e) { console.error("synth.speak error:", e); }
+            }, 50);
+             console.log("TTS:", text);
+        }
+
+        // 7. Vibrate Feedback
+        function vibrateFeedback() {
+            if (settings.vibrationEnabled && navigator.vibrate) {
+                navigator.vibrate(120); // Simple short vibration
+                console.log("Vibration: 120ms");
+            }
+        }
+
+        // 8. Translate Object Name (Simplified)
+        function translateObjectName(className) {
+             const translations = { 'person': '사람', 'bicycle': '자전거', 'car': '자동차', 'motorcycle': '오토바이', 'bus': '버스', 'truck': '트럭', 'stop sign': '정지표지판', 'bench': '벤치', 'chair': '의자' /* Add more essentials */ };
+            return translations[className] || className;
+        }
+
+        // --- Event Listeners ---
+        startButton.addEventListener('click', startDetection);
+        stopButton.addEventListener('click', stopDetection);
+
+        soundToggle.addEventListener('change', (e) => {
+            settings.soundEnabled = e.target.checked;
+            console.log("Sound Enabled:", settings.soundEnabled);
+            if (!settings.soundEnabled && synth?.speaking) synth.cancel();
+        });
+
+        vibrationToggle.addEventListener('change', (e) => {
+            settings.vibrationEnabled = e.target.checked;
+            console.log("Vibration Enabled:", settings.vibrationEnabled);
+            if (!settings.vibrationEnabled) navigator.vibrate?.(0);
+        });
+
+        // Uncomment if using box toggle
+        // boxToggle.addEventListener('change', (e) => {
+        //     settings.showBoxes = e.target.checked;
+        //     console.log("Show Boxes:", settings.showBoxes);
+        //     if (!settings.showBoxes) ctx.clearRect(0, 0, canvas.width, canvas.height); // Clear boxes if disabled
+        // });
+
+        // Graceful shutdown
+        window.addEventListener('beforeunload', stopDetection);
+
+        // --- Initial Load ---
+        initializeApp();
+
+    </script>
+</body>
+</html>
