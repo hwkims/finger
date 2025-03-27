@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>🐾 스마트 펫 트레이너</title>
+
+    <!-- TensorFlow.js -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@latest/dist/mobilenet.min.js"></script>
+
+    <!-- Google Fonts (Optional, for nicer typography) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            --blur-intensity: 15px;
+            --background-opacity: 0.15;
+            --border-opacity: 0.25;
+            --border-radius-main: 18px;
+            --border-radius-small: 12px;
+            --primary-color: #007AFF; /* Apple Blue */
+            --success-color: #34C759; /* Apple Green */
+            --warning-color: #FF9500; /* Apple Orange */
+            --error-color: #FF3B30; /* Apple Red */
+            --text-color-primary: #EFEFEF;
+            --text-color-secondary: #B0B0B0;
+            --shadow-color: rgba(0, 0, 0, 0.15);
+            --highlight-color: rgba(255, 255, 255, 0.2);
+        }
+
+        *, *::before, *::after {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        html {
+             /* iOS Bounce 방지 */
+            overscroll-behavior: none;
+        }
+
+        body {
+            font-family: 'Noto Sans KR', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            padding: 30px 15px;
+            background: linear-gradient(135deg, #6a11cb 0%, #2575fc 100%); /* Vibrant Gradient Background */
+            color: var(--text-color-primary);
+            overflow-x: hidden; /* 가로 스크롤 방지 */
+        }
+
+        h1 {
+            font-size: 1.8em;
+            font-weight: 700;
+            margin-bottom: 25px;
+            text-shadow: 0 2px 4px var(--shadow-color);
+            text-align: center;
+        }
+
+        /* Glassmorphism Container */
+        .glass-container {
+            background: rgba(255, 255, 255, var(--background-opacity));
+            backdrop-filter: blur(var(--blur-intensity));
+            -webkit-backdrop-filter: blur(var(--blur-intensity)); /* Safari */
+            border-radius: var(--border-radius-main);
+            border: 1px solid rgba(255, 255, 255, var(--border-opacity));
+            padding: 25px;
+            box-shadow: 0 8px 32px 0 var(--shadow-color);
+            width: 100%;
+            max-width: 450px;
+            text-align: center;
+            margin-bottom: 20px;
+            transition: all 0.3s ease;
+        }
+
+        #status {
+            font-size: 0.95em;
+            font-weight: 500;
+            margin-bottom: 20px;
+            min-height: 20px;
+            transition: color 0.3s ease;
+            color: var(--text-color-secondary);
+        }
+        #status.loading { color: var(--warning-color); }
+        #status.ready { color: var(--success-color); }
+        #status.predicting { color: var(--primary-color); }
+        #status.error { color: var(--error-color); }
+        #status.done { color: var(--success-color); }
+        #status.feedback { color: #FFF; font-weight: 500; }
+
+        .image-area {
+            width: 100%;
+            height: 280px;
+            border: 2px dashed rgba(255, 255, 255, 0.3);
+            border-radius: var(--border-radius-small);
+            margin: 0 auto 20px auto;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+            background-color: rgba(0, 0, 0, 0.1);
+            position: relative;
+        }
+
+        #imagePreview {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: cover;
+            display: none;
+            border-radius: calc(var(--border-radius-small) - 2px); /* Fit inside dashed border */
+        }
+
+        #placeholder {
+            color: var(--text-color-secondary);
+            font-size: 1.1em;
+            padding: 10px;
+        }
+
+        /* Hide default file input */
+        #fileInput { display: none; }
+
+        /* Styled Label for File Input */
+        .file-label {
+            display: none; /* Show only when model is ready */
+            padding: 12px 25px;
+            background: rgba(255, 255, 255, 0.2);
+            color: var(--text-color-primary);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: var(--border-radius-small);
+            cursor: pointer;
+            font-size: 1em;
+            font-weight: 500;
+            transition: all 0.2s ease;
+            margin-bottom: 20px;
+        }
+        .file-label:hover {
+            background: rgba(255, 255, 255, 0.3);
+            transform: translateY(-2px);
+        }
+        .file-label:disabled {
+             background: rgba(180, 180, 180, 0.1);
+             color: rgba(255, 255, 255, 0.4);
+             cursor: not-allowed;
+             border-color: rgba(255, 255, 255, 0.1);
+        }
+
+
+        /* Command Buttons Area */
+        .command-section {
+            margin: 20px 0;
+            opacity: 0; /* Initially hidden */
+            visibility: hidden;
+            max-height: 0;
+            transition: opacity 0.4s ease, max-height 0.4s ease, margin 0.4s ease;
+        }
+        .command-section.visible {
+            opacity: 1;
+            visibility: visible;
+            max-height: 200px; /* Adjust as needed */
+        }
+        .command-section h3 {
+            font-size: 1em;
+            font-weight: 500;
+            color: var(--text-color-secondary);
+            margin-bottom: 15px;
+        }
+        .command-buttons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            justify-content: center;
+        }
+        .command-button {
+            padding: 10px 18px;
+            background: rgba(0, 122, 255, 0.5); /* Primary color with transparency */
+            color: #FFF;
+            border: 1px solid rgba(0, 122, 255, 0.7);
+            border-radius: var(--border-radius-small);
+            cursor: pointer;
+            font-size: 0.9em;
+            font-weight: 500;
+            transition: all 0.2s ease;
+            flex-grow: 1;
+            min-width: 80px;
+        }
+        .command-button:hover {
+            background: rgba(0, 122, 255, 0.7);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 10px rgba(0, 122, 255, 0.3);
+        }
+        .command-button.selected {
+            background: var(--primary-color);
+            box-shadow: 0 0 15px rgba(0, 122, 255, 0.5);
+            transform: translateY(-1px);
+            border-color: var(--primary-color);
+        }
+        .command-button:disabled {
+            background: rgba(180, 180, 180, 0.2);
+            color: rgba(255, 255, 255, 0.5);
+            cursor: not-allowed;
+             border-color: rgba(180, 180, 180, 0.3);
+             transform: none;
+             box-shadow: none;
+        }
+
+        /* Main Action Button (Predict) */
+        #predictButton {
+            width: 100%;
+            padding: 15px 30px;
+            margin-top: 10px;
+            background: linear-gradient(135deg, var(--success-color), #28a745); /* Green Gradient */
+            color: white;
+            border: none;
+            border-radius: var(--border-radius-small);
+            cursor: pointer;
+            font-size: 1.1em;
+            font-weight: 700;
+            transition: all 0.2s ease;
+            letter-spacing: 0.5px;
+            box-shadow: 0 4px 15px rgba(40, 167, 69, 0.3);
+        }
+        #predictButton:disabled {
+            background: linear-gradient(135deg, #6c757d, #5a6268); /* Gray Gradient */
+            cursor: not-allowed;
+            box-shadow: none;
+            opacity: 0.6;
+        }
+        #predictButton:not(:disabled):hover {
+             transform: translateY(-2px);
+             box-shadow: 0 6px 20px rgba(40, 167, 69, 0.4);
+        }
+         #predictButton:not(:disabled):active {
+             transform: translateY(0px);
+             box-shadow: 0 2px 10px rgba(40, 167, 69, 0.3);
+        }
+
+
+        /* Result Area */
+        #resultArea {
+            margin-top: 25px;
+            padding: 20px;
+            text-align: left;
+            background: rgba(0, 0, 0, 0.1); /* Darker transparent background for contrast */
+            border-radius: var(--border-radius-small);
+            border-top: 1px solid var(--highlight-color); /* Subtle highlight */
+            opacity: 0;
+            max-height: 0;
+            visibility: hidden;
+            transition: opacity 0.5s ease, max-height 0.5s ease, margin-top 0.5s ease;
+            overflow: hidden; /* Prevent content spill during transition */
+        }
+
+        #resultArea.visible {
+             opacity: 1;
+             max-height: 500px; /* Allow space for content */
+             visibility: visible;
+        }
+
+        #resultArea h2 {
+            font-size: 1.2em;
+            font-weight: 700;
+            color: var(--text-color-primary);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+            padding-bottom: 8px;
+            margin-bottom: 15px;
+        }
+
+        #resultArea p, #resultArea ul {
+            margin-bottom: 12px;
+            font-size: 0.95em;
+            line-height: 1.6;
+            color: var(--text-color-primary);
+        }
+        #resultArea ul {
+            padding-left: 20px;
+            list-style: none;
+        }
+        #resultArea li {
+            margin-bottom: 8px;
+            position: relative;
+            padding-left: 18px;
+        }
+        #resultArea li::before {
+            content: '🐾'; /* Paw icon */
+            position: absolute;
+            left: 0;
+            top: 1px;
+            font-size: 0.9em;
+            color: var(--primary-color);
+        }
+
+        #resultArea strong {
+            font-weight: 700;
+            color: #FFF;
+        }
+
+        .feedback-message {
+            margin-top: 15px;
+            padding: 12px;
+            border-radius: var(--border-radius-small);
+            font-weight: 500;
+            text-align: center;
+        }
+        .feedback-message.positive {
+            background-color: rgba(52, 199, 89, 0.3); /* Green tint */
+            border: 1px solid rgba(52, 199, 89, 0.5);
+            color: #E0FFE8;
+        }
+        .feedback-message.neutral {
+            background-color: rgba(255, 149, 0, 0.3); /* Orange tint */
+            border: 1px solid rgba(255, 149, 0, 0.5);
+            color: #FFF3E0;
+        }
+        .feedback-message.suggestion {
+            background-color: rgba(88, 86, 214, 0.3); /* Indigo tint */
+            border: 1px solid rgba(88, 86, 214, 0.5);
+            color: #EAEAFE;
+        }
+
+        .vibration-feedback {
+            font-size: 0.85em;
+            font-style: italic;
+            color: var(--text-color-secondary);
+            text-align: center;
+            margin-top: 10px;
+        }
+
+        /* Spinner for loading */
+        .spinner {
+            display: inline-block;
+            width: 1em;
+            height: 1em;
+            border: 2px solid currentColor;
+            border-right-color: transparent;
+            border-radius: 50%;
+            animation: spinner-rotation 0.75s linear infinite;
+            margin-left: 8px;
+            vertical-align: middle;
+        }
+        @keyframes spinner-rotation {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+    </style>
+</head>
+<body>
+
+    <h1>🐾 스마트 펫 트레이너</h1>
+
+    <div class="glass-container">
+        <div id="status">모델 로딩 준비 중...</div>
+
+        <div class="image-area">
+            <img id="imagePreview" src="#" alt="업로드된 강아지 이미지">
+            <div id="placeholder">✨ 반려견 사진을 올려주세요 ✨</div>
+        </div>
+
+        <!-- File Upload -->
+        <input type="file" id="fileInput" accept="image/*" disabled>
+        <label for="fileInput" class="file-label" id="fileLabel">사진 선택</label>
+
+        <!-- Command Selection -->
+        <div class="command-section" id="commandSection">
+            <h3>👇 어떤 훈련 중인가요?</h3>
+            <div class="command-buttons">
+                <button class="command-button" data-command="앉아" disabled>앉아</button>
+                <button class="command-button" data-command="기다려" disabled>기다려</button>
+                <button class="command-button" data-command="이리와" disabled>이리와</button>
+                <button class="command-button" data-command="기타" disabled>기타</button>
+            </div>
+        </div>
+
+        <!-- Prediction Button -->
+        <button id="predictButton" disabled>🧐 분석 및 피드백 시작</button>
+
+        <!-- Result Display -->
+        <div id="resultArea">
+            <h2>📊 분석 결과</h2>
+            <div id="predictionList"></div>
+            <div id="feedbackSection"></div>
+            <div id="vibrationFeedback" class="vibration-feedback"></div>
+        </div>
+    </div>
+
+    <script>
+        // DOM Elements
+        const statusDiv = document.getElementById('status');
+        const imagePreview = document.getElementById('imagePreview');
+        const fileInput = document.getElementById('fileInput');
+        const predictButton = document.getElementById('predictButton');
+        const resultArea = document.getElementById('resultArea');
+        const placeholder = document.getElementById('placeholder');
+        const fileLabel = document.getElementById('fileLabel');
+        const commandSection = document.getElementById('commandSection');
+        const commandButtons = document.querySelectorAll('.command-button');
+        const predictionListDiv = document.getElementById('predictionList');
+        const feedbackSectionDiv = document.getElementById('feedbackSection');
+        const vibrationFeedbackDiv = document.getElementById('vibrationFeedback');
+
+
+        let model;
+        let currentImageLoaded = false;
+        let selectedCommand = null;
+
+        // --- Constants ---
+        const DOG_KEYWORDS = ['dog', 'puppy', 'retriever', 'shepherd', 'terrier', 'poodle', 'beagle', 'dachshund', 'bulldog', 'husky', 'corgi', 'shiba', 'canine']; // Keywords to identify dog predictions
+        const DOG_CONFIDENCE_THRESHOLD = 0.40; // 40% confidence threshold to consider it a dog
+        const VIBRATION_THRESHOLD = 0.65; // 65% confidence for vibration feedback
+
+        // --- Utility Functions ---
+        function updateStatus(message, type = 'info', showSpinner = false) {
+            statusDiv.innerHTML = `${message} ${showSpinner ? '<span class="spinner"></span>' : ''}`;
+            statusDiv.className = type; // Apply class for styling (loading, ready, error, etc.)
+        }
+
+        function enableCommands(enable) {
+            commandButtons.forEach(btn => btn.disabled = !enable);
+            if(enable) {
+                commandSection.classList.add('visible');
+            } else {
+                commandSection.classList.remove('visible');
+                // Reset selection
+                commandButtons.forEach(btn => btn.classList.remove('selected'));
+                selectedCommand = null;
+            }
+        }
+
+        function checkEnablePredictButton() {
+             predictButton.disabled = !(currentImageLoaded && selectedCommand && model);
+        }
+
+        function triggerVibration(duration = 150) {
+            if ('vibrate' in navigator) {
+                navigator.vibrate(duration);
+                vibrationFeedbackDiv.innerText = '✨ (칭찬 진동 발생!)';
+                console.log("Vibration triggered.");
+            } else {
+                 vibrationFeedbackDiv.innerText = ''; // Don't show message if not supported
+                console.log("Vibration not supported.");
+            }
+        }
+
+        // --- 1. Model Loading ---
+        async function loadModel() {
+            updateStatus('🧠 AI 모델 로딩 중...', 'loading', true);
+            try {
+                model = await mobilenet.load({ version: 2, alpha: 0.75 }); // Load MobileNet
+                updateStatus('✅ 모델 준비 완료! 사진을 선택하세요.', 'ready');
+                fileLabel.style.display = 'inline-block'; // Show file input label
+                fileInput.disabled = false;
+                console.log("Model loaded successfully");
+            } catch (error) {
+                console.error("Error loading model:", error);
+                updateStatus('❌ 모델 로딩 실패! 새로고침 해주세요.', 'error');
+                fileLabel.style.display = 'inline-block'; // Still show button but keep disabled
+            }
+        }
+
+        // --- 2. File Handling ---
+        fileInput.addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            currentImageLoaded = false; // Reset flag
+            enableCommands(false); // Disable commands initially
+            resultArea.classList.remove('visible'); // Hide old results
+            selectedCommand = null; // Reset command selection
+
+            if (file && model) { // Only proceed if model is loaded
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    imagePreview.src = e.target.result;
+                    imagePreview.style.display = 'block';
+                    placeholder.style.display = 'none';
+                    currentImageLoaded = true;
+                    updateStatus('👍 사진 준비 완료! 훈련 명령을 선택하세요.', 'ready');
+                    enableCommands(true); // Enable command buttons
+                    checkEnablePredictButton(); // Check if predict can be enabled
+                }
+                reader.onerror = (err) => {
+                    console.error("FileReader error:", err);
+                    updateStatus('❌ 파일 읽기 오류 발생', 'error');
+                    enableCommands(false);
+                    checkEnablePredictButton();
+                }
+                reader.readAsDataURL(file);
+            } else {
+                // Reset view if no file or model not ready
+                imagePreview.src = '#';
+                imagePreview.style.display = 'none';
+                placeholder.style.display = 'block';
+                 if (!model) {
+                     updateStatus('⏳ 모델 로딩을 기다려주세요...', 'loading');
+                 } else {
+                    updateStatus('✅ 모델 준비 완료! 사진을 선택하세요.', 'ready');
+                 }
+                enableCommands(false);
+                checkEnablePredictButton();
+            }
+        });
+
+        // --- 3. Command Selection ---
+        commandButtons.forEach(button => {
+            button.addEventListener('click', () => {
+                if (button.disabled) return;
+
+                // Deselect other buttons
+                commandButtons.forEach(btn => btn.classList.remove('selected'));
+                // Select this button
+                button.classList.add('selected');
+                selectedCommand = button.dataset.command;
+                console.log("Command selected:", selectedCommand);
+                updateStatus(`"${selectedCommand}" 훈련! 분석 버튼을 누르세요.`, 'feedback');
+                checkEnablePredictButton(); // Enable predict button if image is also ready
+            });
+        });
+
+        // --- 4. Prediction and Feedback ---
+        predictButton.addEventListener('click', async () => {
+            if (!model || !currentImageLoaded || !selectedCommand) {
+                updateStatus('⚠️ 사진 선택과 명령 선택을 완료해주세요.', 'error');
+                return;
+            }
+
+            updateStatus('🐶 AI가 분석 중입니다...', 'predicting', true);
+            predictButton.disabled = true; // Disable during prediction
+            resultArea.classList.remove('visible'); // Hide previous results briefly
+            vibrationFeedbackDiv.innerText = ''; // Clear vibration message
+
+
+            try {
+                // Ensure image element is ready for prediction
+                await imagePreview.decode(); // Wait for image to be fully decoded
+
+                const predictions = await model.classify(imagePreview, 3); // Get top 3 predictions
+                console.log('Predictions:', predictions);
+
+                displayResults(predictions); // Display breed/object predictions
+                generateFeedback(predictions); // Generate training feedback
+
+                resultArea.classList.add('visible'); // Show results area smoothly
+                updateStatus(`"${selectedCommand}" 훈련 분석 완료!`, 'done');
+
+            } catch (error) {
+                console.error("Prediction error:", error);
+                updateStatus('❌ 분석 중 오류가 발생했습니다.', 'error');
+                resultArea.classList.remove('visible');
+            } finally {
+                // Re-enable predict button after analysis (or error)
+                 checkEnablePredictButton(); // Check conditions again (might have changed)
+            }
+        });
+
+        // --- 5. Display Results ---
+        function displayResults(predictions) {
+            predictionListDiv.innerHTML = ''; // Clear previous list
+            if (!predictions || predictions.length === 0) {
+                predictionListDiv.innerHTML = '<p>인식된 객체가 없습니다.</p>';
+                return;
+            }
+
+            const list = document.createElement('ul');
+            predictions.forEach(pred => {
+                const prob = (pred.probability * 100).toFixed(1);
+                const className = pred.className.split(',')[0]; // Cleaner name
+
+                const listItem = document.createElement('li');
+                listItem.innerHTML = `<strong>${className}</strong> (${prob}%)`;
+                list.appendChild(listItem);
+            });
+            predictionListDiv.appendChild(list);
+        }
+
+        // --- 6. Generate Training Feedback (Simulation) ---
+        function generateFeedback(predictions) {
+            feedbackSectionDiv.innerHTML = ''; // Clear previous feedback
+            vibrationFeedbackDiv.innerText = ''; // Clear vibration text
+
+            if (!predictions || predictions.length === 0) {
+                feedbackSectionDiv.innerHTML = `<p class="feedback-message neutral">이미지에서 주요 객체를 찾지 못했어요. 선명한 사진으로 다시 시도해 보세요!</p>`;
+                return;
+            }
+
+            // Check if a dog was detected with sufficient confidence
+            let dogDetected = false;
+            let topDogPrediction = null;
+            for (const pred of predictions) {
+                const classNameLower = pred.className.toLowerCase();
+                if (DOG_KEYWORDS.some(keyword => classNameLower.includes(keyword)) && pred.probability >= DOG_CONFIDENCE_THRESHOLD) {
+                    dogDetected = true;
+                    topDogPrediction = pred; // Use the highest confidence dog prediction
+                    break; // Found a dog, no need to check further
+                }
+            }
+
+            let feedbackMsg = '';
+            let feedbackClass = 'neutral'; // Default class
+
+            if (dogDetected) {
+                const dogName = topDogPrediction.className.split(',')[0];
+                const dogProb = (topDogPrediction.probability * 100).toFixed(1);
+
+                 // Positive feedback if a dog is clearly detected during training command
+                 feedbackMsg = `👍 <strong>${dogName}</strong> (${dogProb}%) 인식! "${selectedCommand}" 훈련에 잘 집중하고 있네요! 멋져요!`;
+                 feedbackClass = 'positive';
+
+                // Trigger vibration for high confidence dog detection
+                if (topDogPrediction.probability >= VIBRATION_THRESHOLD) {
+                    triggerVibration();
+                } else {
+                     vibrationFeedbackDiv.innerText = '(조금 더 선명한 사진이면 좋겠어요!)';
+                }
+
+            } else {
+                 // Neutral/Suggestion feedback if no dog detected clearly
+                 const topObjectName = predictions[0].className.split(',')[0];
+                 const topObjectProb = (predictions[0].probability * 100).toFixed(1);
+
+                 if (topObjectProb > 0.5) { // If something else is recognized somewhat clearly
+                     feedbackMsg = `🤔 음... <strong>${topObjectName}</strong> (${topObjectProb}%) 같아요. 혹시 반려견이 사진에 명확하게 나왔나요? "${selectedCommand}" 훈련을 다시 시도해보세요!`;
+                    feedbackClass = 'suggestion';
+                 } else {
+                     feedbackMsg = `😥 사진에서 반려견을 명확히 찾기 어려워요. "${selectedCommand}" 훈련 모습을 더 선명하게 찍어볼까요?`;
+                     feedbackClass = 'neutral';
+                 }
+                 vibrationFeedbackDiv.innerText = ''; // No vibration if dog not detected well
+            }
+
+             feedbackSectionDiv.innerHTML = `<div class="feedback-message ${feedbackClass}">${feedbackMsg}</div>`;
+        }
+
+        // --- Initial Load ---
+        window.onload = loadModel; // Load the model once the window is ready
+
+    </script>
+
+</body>
+</html>
